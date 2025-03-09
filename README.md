@@ -7,3 +7,6 @@ This was my first stab at creating a replayable blackjack game strictly using py
 
 # tic_tac_toe.py
 This is a replayable game of tic tac toe that you can enjoy with a friend. In the future it would be fun to attempt to create an a computer to compete against and also include a scoreboard so that a series of games can be tracked. I mainly utilized functions loops and fstrings to complete this.
+
+# budget_app
+Testing ground for various components of a larger budgeting/personal finance application I'm working on. 

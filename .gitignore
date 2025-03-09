@@ -1,0 +1,8 @@
+venv
+
+/budget_app/tdbank_statements/*
+!/budget_app/tdbank_statements/sample.pdf
+
+/budget_app/transactions/*
+!/budget_app/transactions/test.csv
+

@@ -3,8 +3,8 @@ import pdfplumber
 from pathlib import Path
 
 # Directory & File path variables
-tdbank_statements_path = Path('C:/Users/ogord/dev/python-scripts/budget-app/tdbank-statements')
-csv_file_path = Path('C:/Users/ogord/dev/python-scripts/budget-app/transactions/tdbank_output.csv')
+tdbank_statements_path = Path('C:/Users/ogord/dev/python-scripts/budget_app/tdbank_statements')
+csv_file_path = Path('C:/Users/ogord/dev/python-scripts/budget_app/transactions/tdbank_output.csv')
 # Transaction data CSV headers
 data = [['Date', 'Amount', 'Category', 'Description', 'Tags']]
 # Used to confirm cuurent line of the PDF is a transaction (all transactions start with a date in the format MM/DD)

@@ -4,9 +4,11 @@ from pathlib import Path
 
 # Directory & File path variables
 tdbank_statements_path = Path('C:/Users/ogord/dev/python-scripts/budget_app/tdbank_statements')
-csv_file_path = Path('C:/Users/ogord/dev/python-scripts/budget_app/transactions/tdbank_output.csv')
+transactions_csv_file_path = Path('C:/Users/ogord/dev/python-scripts/budget_app/transactions/tdbank_payments_output.csv')
+deposits_csv_file_path = Path('C:/Users/ogord/dev/python-scripts/budget_app/deposits/tdbank_deposits_output.csv')
 # Transaction data CSV headers
-data = [['Date', 'Amount', 'Category', 'Description', 'Tags']]
+transaction_data = [['Date', 'Amount', 'Category', 'Description', 'Tags']]
+deposit_data = [['Date', 'Description', 'Amount']]
 # Used to confirm cuurent line of the PDF is a transaction (all transactions start with a date in the format MM/DD)
 dates=['01/', '02/', '03/', '04/', '05/', '06/', '07/', '08/', '09/', '10/', '11/', '12/']
 # Setting up lists for transaction and deposit data
@@ -19,12 +21,11 @@ tracking_transactions = False
 
 # Extract transaction data from bank statements
 for pdf_file in tdbank_statements_path.glob('*.pdf'):
-    all_text = ''
+    text = ''
     with pdfplumber.open(str(pdf_file)) as pdf:
         for page in pdf.pages:
-            text =page.extract_text()
-            all_text+=text
-    lines = all_text.split('\n')
+            text += page.extract_text()
+    lines = text.split('\n')
     for i in range(len(lines)):
         if lines[i] == 'ElectronicPayments' or lines[i] == 'ElectronicPayments(continued)':
             tracking_transactions = True
@@ -44,27 +45,35 @@ for pdf_file in tdbank_statements_path.glob('*.pdf'):
             tracking_deposits = False
             tracking_transactions = False
 
-
-print('****Transactions********')
-print(transactions)
-print('****Deposits*****')
-print(deposits)
-
 # Refine transaction data and write to CSV
 for transaction in transactions:
     transaction_split = transaction.split(' ')
     date = transaction_split[0]
-    if transaction_split[-1] == "AP": breakpoint()
     amount = transaction_split.pop()
     transaction_split = " ".join(transaction_split).split(',')
     description = transaction_split.pop()
     category = ''
     tags = ''
-    data.append([date, amount, category, description, tags])
+    transaction_data.append([date, amount, category, description, tags])
 
 # Open the file in write mode
-with open(csv_file_path, mode='w', newline='') as file:
+with open(transactions_csv_file_path, mode='w', newline='') as file:
     writer = csv.writer(file)
-    writer.writerows(data)
+    writer.writerows(transaction_data)
 
-print(f"Transaction data CSV file created at: '{csv_file_path}'.")
+print(f"Transaction data CSV file created at: '{transactions_csv_file_path}'.")
+
+# Refine deposit data and write to CSV
+for deposit in deposits:
+    deposit_split = deposit.split(' ')
+    date = deposit_split.pop(0)
+    amount = deposit_split.pop()
+    description = " ".join(deposit_split)
+    deposit_data.append([date, description, amount])
+
+# Open the file in write mode
+with open(deposits_csv_file_path, mode='w', newline='') as file:
+    writer = csv.writer(file)
+    writer.writerows(deposit_data)
+
+print(f"Deposit data CSV file created at: '{deposits_csv_file_path}'.")

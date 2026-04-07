@@ -1,0 +1,127 @@
+name: 123456
+source_file: Storage/example.json
+source_file_path: company_policies/policyDefinitions/Storage/example.json
+policy_name: '[prefix] ExampleStoragePolicy'
+display_name: '[PREFIX] Example Storage Policy'
+descripiton: Deploys the disgnostic setting for stroage accounts
+type: Custom
+mode: Indexed
+company_metadata:
+  policy_sorce: company 
+  hardening_control:
+    - TEST-111
+    - CloudPol
+initiatives:
+  - location: /Company  
+    parameters:
+      - name: environment
+        type: Array
+        metadata:
+          displayName: Environment
+          description: the environment of the subscripiton
+        defaultValue:
+          - Non-Production
+      - name: profileName
+        type: String
+        metadata:
+          displayName: Profile Name
+          description: the disgnostic setting profile name
+        defaultValue: LogAnalytics
+      - name: logAnalytics
+        type: String
+        metadata:
+          displayName: Log Analytics Workspace
+          description: Specify the log analytics workspace the stroage account should be connected to
+          strongType: omsWorkspace
+          assignPermissions: true 
+        defaultValue: DYNAMIC_REPLACEMENT
+    env_parameter_maop:
+      - name: logAnalytics
+        replacements:
+          - tenant: PNC-QA
+            target: CSO-Security
+            resource_parameter:
+              /subscripitons/12345av-345gv-bdf345-2145f5453c54/resourcegroups/rg-fent5zn0004/providers/microsoft.operationalinsights/workspaces/log-eis-fen-qa-eastus2-001
+          - tenant: PNC
+            target: PNC-Workload-NonProd
+            resource_parameter:
+              /subscripitons/45677as-78345v-bgh456-sdcvs54534sdfs66/resourcegroups/rg-fent8zn0007/providers/microsoft.operationalinsights/workspaces/LOG-EIS-FEN-PROD-001
+          - tenant: PNC
+            target: PNC
+            resource_parameter:
+              /subscripitons/43536gs-546gf-gsyht576-44367fgvj557667/resourcegroups/rg-fent8zn0007/providers/microsoft.operationalinsights/workspaces/LOG-EIS-FEN-PROD-001
+    alias: prod
+management_group_name: Main
+exclude: true
+metadata:
+  category: Storage
+  original_policy_guid: aaaaa23-fdsd-vcv-2242434fsf
+  severity: Low
+rule:
+  if:
+    allOf:
+      - field: type
+        equals: Microsoft.Storage/storageAccounts
+      - value: "[subscripiton().tags['Environment']]"
+        In: "[parameters('environment')]"
+  then:
+    effect: "[parameters('effect')]"
+    details:
+      type: Microsoft.Insights/diagnosticSettings
+      existenceCondition:
+        allOf:
+          - count:
+              field: Microsoft.Insights/diagnosticSettings/metrics[*]
+              where:
+                allOf:
+                  - field: Microsoft.insights/disgnosticSettings/metrics[*].category
+                    equals: Transactions
+                  - field: Microsoft.insights/disgnosticSettings/metrics[*].enabled
+                    equals: "[parameters('metricsEnabled')]"
+            equals: 1
+          - field: Microsoft.Insights/diagnosticSettings/workspaceId
+            equals: "[parameters('logAnalytics')]"
+parameters:
+  effect: 
+    type: String
+    metadata:
+      displayName: Effect 
+      descripiton: Enable or disable the execution of the policy 
+    allowedValues:
+      - DeployIfNotExists
+      - AuditIfNotExists
+      - Disabled
+    defaultValue: DeployIfNotExists
+  profileName:
+    type: String
+    metadata:
+      displayName: Profile name
+      descripiton: The disgnostic settings profile name
+    defaultValue: updated_logAnalytics
+  logAnalytics:
+    type: String
+    metadata:
+      displayName: Log analytics workspace
+      descripiton: select log analutcs wrokspsce from the dropdown list.
+    strongType: omsWorkspace
+    assignPermissions: true
+  metricsEnabled:
+    type: Boolean
+    metadata:
+      displayName: Enable metrics
+      descripiton: whether to enable metrics stream to the log analytics workspace. true or false
+    allowedValues:
+      - true
+      - false
+    defaultValue: false
+  environment:
+    type: Array
+    metadata:
+      displayName: Environment
+      descripiton: The environment of the subscripiton
+    allowedValues:
+      - Non-Production
+      - Production
+    defaultValue:
+      - Non-Production
+      - Production

@@ -22,3 +22,16 @@ variable "bofa_qa_subscription_id" {
   type        = string
   description = "Subscription ID used by the azurerm provider when authing against BofA-QA. Set via TF_VAR_bofa_qa_subscription_id."
 }
+
+
+
+
+
+variable "tenant_a_tenant_id"        { type = string }
+variable "tenant_a_subscription_id"  { type = string }
+variable "tenant_a_client_id"        { type = string }
+variable "tenant_a_cert_path"        { type = string, sensitive = true }
+variable "tenant_a_cert_password"    { type = string, sensitive = true }
+
+variable "tenant_b_tenant_id"        { type = string }
+# ... same shape for tenant_b ...

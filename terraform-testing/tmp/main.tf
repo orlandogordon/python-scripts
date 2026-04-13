@@ -60,3 +60,51 @@ module "staging_pok" {
   target_mg     = try(local.entries_by_artifact["staging_pok"].target, "")
   enforce       = try(local.entries_by_artifact["staging_pok"].enforce, true)
 }
+
+
+
+# main.tf (root)
+
+locals {
+  artifacts_by_tenant = {
+    for name, cfg in local.artifacts :
+    cfg.tenant_short => { (name) = cfg }...
+  }
+  # The ... at the end groups multiple values with the same key into a list,
+  # then we merge the inner maps:
+  artifacts_tenant_a = lookup(local.artifacts_by_tenant, "tenant_a", [])
+  artifacts_tenant_b = lookup(local.artifacts_by_tenant, "tenant_b", [])
+}
+
+# One module call per tenant, iterating over that tenant's artifacts
+module "deployer_tenant_a" {
+  source = "./modules/deployer"
+  for_each = {
+    for cfg_map in local.artifacts_tenant_a :
+    keys(cfg_map)[0] => values(cfg_map)[0]
+  }
+
+  providers = {
+    azurerm = azurerm.tenant_a
+  }
+
+  artifact_name = each.key
+  config        = each.value
+  artifact_path = each.value.artifact_path
+}
+
+module "deployer_tenant_b" {
+  source = "./modules/deployer"
+  for_each = {
+    for cfg_map in local.artifacts_tenant_b :
+    keys(cfg_map)[0] => values(cfg_map)[0]
+  }
+
+  providers = {
+    azurerm = azurerm.tenant_b
+  }
+
+  artifact_name = each.key
+  config        = each.value
+  artifact_path = each.value.artifact_path
+}

@@ -1,0 +1,65 @@
+name: 9557ac38b2f63f68b6b1c011e4115805
+source_file: Storage/StorageAccess_TrustedMicrosoftServices_Audit.json
+source_file_path: azure-policy/built-in-policies/policyDefinitions/Storage/StorageAccess_TrustedMicrosoftServices_Audit.json
+policy_name: StorageAccountShouldAllowAccessFromTrustedMicrosoftServices
+display_name: Storage accounts should allow access from trusted Microsoft services
+descripiton: Some Microsoft services that interact with storage accounts operate from networks that can't be granted access through network rules.
+type: Custom
+mode: Indexed
+bofa_metadata:
+  policy_sorce: microsoft
+  hardening_guide_control:
+    - ASTS-007
+  CISv1_1_0:
+    - CIS_Azure_1.1.0_3.8
+  CISv1_3_0:
+    - CIS_Azure_1.3.0_3.7
+  System_and_Organization_Controls: OOB_No_SOC_Value
+  HIPAA_HITRUST: OOB_No_Hippa_Value
+  CISv1_4_0:
+    - CIS_Azure_1.4.0_3.7
+  CISv2_0_0:
+    - CIS_Azure_2.0.0_3.9
+initiatives:
+  - location: /bofa
+    parameters:
+      - name: effect
+        type: String
+        defaultValue: Deny
+        allowedValues:
+          - Audit
+          - Deny
+          - Disabled
+        metadata:
+          displayName: Effect
+          description: The effect determines what happens when the policy rule is evaluated to match
+    alias: default
+management_group_name: bofa
+exclude: false
+metadata:
+  version: 1.0.0
+  category: Storage
+  original_policy_guid: c9d007d0-a043-4772-b18c-01e546713bcd
+  severity: Low
+rule:
+  if:
+    allOf:
+      - field: type
+        equals: Microsoft.Storage/storageAccounts
+      - field: Microsoft.Storage/storageAccounts/networkAcls.bypass
+        exists: 'true'
+      - field: Microsoft.Storage/storageAccounts/networkAcls.bypass
+        notContains: AzureServices
+  then:
+    effect: "[parameters('effect')]"
+parameters:
+  effect:
+    type: String
+    defaultValue: Audit
+    allowedValues:
+      - Audit
+      - Deny
+      - Disabled
+    metadata:
+      displayName: Effect
+      descripiton: The effect determines what happens when the policy rule is evaluated to match

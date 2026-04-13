@@ -1,0 +1,69 @@
+name: a2d26140388d9fb2a699bbe5e8cbae54
+source_file: Storage/ANF_SMBVolumesShouldUseSMB3Encryption.json
+source_file_path: azure-policy/built-in-policies/policyDefinitions/Storage/ANF_SMBVolumesShouldUseSMB3Encryption.json # ???
+policy_name: AzureNetappFilesSmbVolumesShouldUseSmb3Encryption
+display_name: Azure Netapp Files SMB Volumes should use SMB3 encryption
+descripiton: Disallow the creation of SMB Volumes without SMB3 encryption to ensure data integrity and data privacy.
+type: Custom
+mode: All
+bofa_metadata:
+  policy_sorce: microsoft
+  hardening_guide_control:
+    - ASTS-052
+  CISv1_1_0: OOB_No_CIS_Value
+  CISv1_3_0: OOB_No_CIS_Value
+  NIST_control_80053_r4: OOB_No_NIST_Value
+  NIST_control_80053_r5: OOB_No_NIST_Value
+  System_and_Organization_Controls: OOB_No_SOC_Value
+  HIPAA_HITRUST: OOB_No_Hippa_Value
+  CISv1_4_0: OOB_No_CIS_Value
+  CISv2_0_0: OOB_No_CIS_Value
+initiatives:
+  - location: /bofa
+    parameters:
+      - name: effect
+        type: String
+        allowedValues:
+          - Audit
+          - Deny
+          - Disabled
+        metadata:
+          displayName: Effect
+        defaultValue: Deny
+    alias: default
+management_group_name: bofa
+exclude: false
+metadata:
+  version: 1.0.0
+  category: Storage
+  original_policy_guid: bbcf4b94-9dfa-4a80-aca6-22bb654fde72
+  severity: Low
+rule:
+  if:
+    allOf:
+      - field: type
+        equals: Microsoft.Netapp/netAppAccounts/capacityPools/volumes
+      - count:
+          field: Microsoft.Netapp/netAppAccounts/capacityPools/volumes/protocolType[*]
+          where:
+            field: Microsoft.Netapp/netAppAccounts/capacityPools/volumes/protocolTypes[*]
+            equals: CIFS
+        greater: 0
+      - anyOf:
+          - field: Microsoft.Netapp/netAppAccounts/capacityPools/volumes/smbEncryption 
+          - exists: 'false'
+          - field: Microsoft.Netapp/netAppAccounts/capacityPools/volumes/smbEncryption 
+          - equals: 'false'
+  then:
+    effect: "[parameters('effect')]"
+parameters:
+  effect:
+    type: String
+    defaultValue: Audit
+    allowedValues:
+      - Audit
+      - Deny
+      - Disabled
+    metadata:
+      displayName: Effect
+      descripiton: Enable or disable the execution of the policy

@@ -1,0 +1,284 @@
+// Jenkinsfile
+//
+// Discovers all artifact directories under artifacts/, reads each config.yml,
+// and runs `make plan` + `make apply` for each one in parallel.
+// Each artifact directory represents one deployment to one tenant/target combination.
+
+pipeline {
+    agent none
+
+    options {
+        // Don't let two builds of the same branch race against the same workspaces
+        disableConcurrentBuilds()
+        // Plans can be slow with many policies; give the build room
+        timeout(time: 2, unit: 'HOURS')
+        // Keep build history bounded
+        buildDiscarder(logRotator(numToKeepStr: '50'))
+        // Show timestamps in console output
+        timestamps()
+        // Color the console output for readability
+        ansiColor('xterm')
+    }
+
+    environment {
+        // Terraform Cloud / self-hosted backend token
+        // Hostname dots become underscores in the env var name
+        TF_TOKEN_abc_company_name_net = credentials('tf-backend-token')
+        // Make Terraform non-interactive everywhere
+        TF_IN_AUTOMATION = 'true'
+        TF_INPUT = 'false'
+    }
+
+    stages {
+
+        // ---------------------------------------------------------------
+        // Discover: find all artifacts/*/config.yml, parse them,
+        // and build the list of deployments to run in parallel.
+        // ---------------------------------------------------------------
+        stage('Discover') {
+            agent { label 'terraform' }
+            steps {
+                checkout scm
+                sh 'git submodule update --init --recursive'
+
+                script {
+                    // Find all config.yml files exactly two levels deep
+                    // (artifacts/<staging_dir>/config.yml)
+                    def configFiles = sh(
+                        returnStdout: true,
+                        script: 'find artifacts -mindepth 2 -maxdepth 2 -name config.yml | sort'
+                    ).trim()
+
+                    if (!configFiles) {
+                        error 'No artifacts/*/config.yml files found. Nothing to deploy.'
+                    }
+
+                    def deployments = []
+                    for (cfgPath in configFiles.split('\n')) {
+                        def cfg = readYaml file: cfgPath
+                        def stagingDir = cfgPath
+                            .replaceFirst('artifacts/', '')
+                            .replaceFirst('/config.yml', '')
+
+                        // Validate required fields up front so failures are clear
+                        def required = ['workspace', 'tenant_short', 'target_short']
+                        for (field in required) {
+                            if (!cfg[field]) {
+                                error "${cfgPath} is missing required field: ${field}"
+                            }
+                        }
+
+                        deployments << [
+                            staging:      stagingDir,
+                            workspace:    cfg.workspace,
+                            tenant_short: cfg.tenant_short,
+                            target_short: cfg.target_short,
+                            config_path:  cfgPath
+                        ]
+                    }
+
+                    // Guard against two staging dirs pointing at the same backend workspace.
+                    // Without this, two parallel branches would race against the same state.
+                    def workspaceNames = deployments.collect { it.workspace }
+                    def duplicates = workspaceNames
+                        .findAll { w -> workspaceNames.count(w) > 1 }
+                        .unique()
+                    if (duplicates) {
+                        error "Duplicate workspace names across staging dirs: ${duplicates}. " +
+                              "Each artifact directory must declare a unique workspace."
+                    }
+
+                    // Optional: validate workspace names match naming convention.
+                    // Adjust the pattern to whatever your org uses.
+                    def workspacePattern = ~/^azure-policy--(qa|uat|prod)--[a-z_0-9]+--[a-z_0-9]+$/
+                    for (dep in deployments) {
+                        if (!(dep.workspace ==~ workspacePattern)) {
+                            error "Workspace '${dep.workspace}' in ${dep.config_path} does not match " +
+                                  "naming convention ${workspacePattern}"
+                        }
+                    }
+
+                    echo "Discovered ${deployments.size()} deployments:"
+                    for (dep in deployments) {
+                        echo "  - ${dep.staging} -> ${dep.workspace} (tenant: ${dep.tenant_short})"
+                    }
+
+                    // Make the deployments list available to later stages
+                    env.DEPLOYMENT_COUNT = deployments.size().toString()
+                    // Stash source so parallel branches don't all need to re-checkout from SCM
+                    stash name: 'source', useDefaultExcludes: false
+
+                    // Persist deployments list across stages via a serializable form
+                    writeJSON file: 'deployments.json', json: deployments, pretty: 2
+                    stash name: 'deployments-meta', includes: 'deployments.json'
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------
+        // Plan: run `terraform plan` for every deployment in parallel.
+        // Each branch runs on its own workspace directory to avoid
+        // .terraform/ collisions.
+        // ---------------------------------------------------------------
+        stage('Plan') {
+            steps {
+                script {
+                    // Re-read the deployments list (stages don't share script-scope vars cleanly)
+                    def deployments = readDeploymentsList()
+
+                    def planJobs = [:]
+                    for (deployment in deployments) {
+                        def dep = deployment  // capture for closure
+                        planJobs[dep.staging] = {
+                            node('terraform') {
+                                // Each parallel branch gets its own workspace directory.
+                                // Without this, branches landing on the same agent would
+                                // share .terraform/ and corrupt each other.
+                                ws("workspace-${dep.staging}-${env.BUILD_NUMBER}") {
+                                    unstash 'source'
+                                    runTerraform(dep, 'plan')
+                                    // Stash the plan file for the apply stage
+                                    stash(
+                                        name: "plan-${dep.staging}",
+                                        includes: 'deployer/terraform.plan',
+                                        allowEmpty: false
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    parallel planJobs
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------
+        // Approve: manual gate before applying. One approval covers all targets.
+        // Skipped on non-protected branches if you want plan-only PR builds.
+        // ---------------------------------------------------------------
+        stage('Approve') {
+            when {
+                anyOf {
+                    branch 'main'
+                    branch 'release/*'
+                }
+            }
+            steps {
+                script {
+                    def deployments = readDeploymentsList()
+                    def msg = "Apply ${deployments.size()} deployment(s)?\n" +
+                              deployments.collect { "  - ${it.staging} -> ${it.workspace}" }.join('\n')
+                    timeout(time: 30, unit: 'MINUTES') {
+                        input message: msg, ok: 'Apply'
+                    }
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------
+        // Apply: run `terraform apply` for every deployment in parallel,
+        // using the plan file from the Plan stage.
+        // ---------------------------------------------------------------
+        stage('Apply') {
+            when {
+                anyOf {
+                    branch 'main'
+                    branch 'release/*'
+                }
+            }
+            steps {
+                script {
+                    def deployments = readDeploymentsList()
+
+                    def applyJobs = [:]
+                    for (deployment in deployments) {
+                        def dep = deployment
+                        applyJobs[dep.staging] = {
+                            node('terraform') {
+                                ws("workspace-${dep.staging}-${env.BUILD_NUMBER}") {
+                                    unstash 'source'
+                                    unstash "plan-${dep.staging}"
+                                    runTerraform(dep, 'apply')
+                                }
+                            }
+                        }
+                    }
+                    parallel applyJobs
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            // Clean up workspace dirs; stashes are cleaned automatically on build deletion
+            node('terraform') {
+                deleteDir()
+            }
+        }
+        failure {
+            // Hook in your notification of choice (Slack, email, Teams, etc.)
+            echo "Build failed. Check parallel branch logs for which deployment(s) failed."
+        }
+    }
+}
+
+// =================================================================
+// Helpers
+// =================================================================
+
+// Read the deployments list stashed during Discover.
+// Returns a list of maps with keys: staging, workspace, tenant_short, target_short, config_path
+def readDeploymentsList() {
+    unstash 'deployments-meta'
+    def deployments = readJSON file: 'deployments.json'
+    return deployments
+}
+
+// Run terraform via the makefile, with the right credentials and env vars
+// for the given deployment and action ('plan' or 'apply').
+def runTerraform(Map dep, String action) {
+    withCredentials([
+        file(
+            credentialsId: "azure-cert-${dep.tenant_short}",
+            variable: 'AZURE_CERT'
+        ),
+        string(
+            credentialsId: "azure-cert-password-${dep.tenant_short}",
+            variable: 'AZURE_CERT_PASSWORD'
+        ),
+        string(
+            credentialsId: "azure-client-id-${dep.tenant_short}",
+            variable: 'AZURE_CLIENT_ID'
+        ),
+        string(
+            credentialsId: "azure-tenant-id-${dep.tenant_short}",
+            variable: 'AZURE_TENANT_ID'
+        ),
+        string(
+            credentialsId: "azure-subscription-id-${dep.tenant_short}-${dep.target_short}",
+            variable: 'AZURE_SUBSCRIPTION_ID'
+        )
+    ]) {
+        sh """
+            set -euo pipefail
+
+            # Backend authentication
+            export TF_TOKEN_abc_company_name_net=\$TF_TOKEN_abc_company_name_net
+
+            # Terraform workspace selection
+            export TF_WORKSPACE=${dep.workspace}
+
+            # Azure provider authentication via service principal cert
+            export ARM_CLIENT_ID=\$AZURE_CLIENT_ID
+            export ARM_TENANT_ID=\$AZURE_TENANT_ID
+            export ARM_SUBSCRIPTION_ID=\$AZURE_SUBSCRIPTION_ID
+            export ARM_CLIENT_CERTIFICATE_PATH=\$AZURE_CERT
+            export ARM_CLIENT_CERTIFICATE_PASSWORD=\$AZURE_CERT_PASSWORD
+            export ARM_USE_CLI=false
+
+            # Tell terraform where to find the artifact files
+            make ${action} ARTIFACT_DIR=artifacts/${dep.staging}
+        """
+    }
+}

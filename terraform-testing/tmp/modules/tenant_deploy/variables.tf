@@ -19,16 +19,35 @@ variable "enforce" {
 # modules/deployer/variables.tf
 
 variable "artifact_name" {
-  type        = string
-  description = "Name of the artifact directory (e.g., 'staging_qa'). Used as a prefix for resource names to avoid collisions across module instances."
-}
-
-variable "config" {
-  type        = any
-  description = "Parsed contents of the artifact's config.yml, with artifact_dir and artifact_path fields injected by the root module."
+  type = string
 }
 
 variable "artifact_path" {
+  type = string
+}
+
+variable "tenant" {
   type        = string
-  description = "Absolute path to the artifact directory. The module reads rules/, initiatives/, and assignments/ subfolders from here."
+  description = "Tenant short name — 'corp' or 'qa'. Used for tagging and validation."
+}
+
+variable "enforce" {
+  type        = bool
+  description = "If true, assignments use enforcement_mode Default. If false, DoNotEnforce."
+}
+
+variable "management_group_id" {
+  type        = string
+  description = "Management group ID that policy definitions and initiatives will be created in."
+}
+
+variable "subscription_id" {
+  type        = string
+  description = "Subscription ID used as default scope for subscription-scoped assignments."
+}
+
+variable "assignment_ids" {
+  type        = list(string)
+  default     = []
+  description = "User-assigned managed identity resource IDs for assignments. If empty, assignments use SystemAssigned identity."
 }

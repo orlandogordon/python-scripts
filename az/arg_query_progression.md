@@ -278,6 +278,63 @@ policyresources
 | order by assignmentId asc, referenceId asc
 ```
 
+## Step 8a — Full projection and tag extraction
+
+If Steps 6 and 7 both pass, plug in the full field list and the mnemonic/environment extraction:
+
+```kusto
+policyresources
+| where type == 'microsoft.policyinsights/policystates'
+| where tostring(properties.policyAssignmentScope) == '/providers/Microsoft.Management/managementGroups/<MG_ID>'
+| take 20
+| extend rid = tolower(tostring(properties.resourceId))
+| project
+    policyDefinitionId = tolower(tostring(properties.policyDefinitionId)),
+    assignmentId = tostring(properties.policyAssignmentId),
+    referenceId = tolower(tostring(properties.policyDefinitionReferenceId)),
+    complianceState = tostring(properties.complianceState),
+    resourceId = rid,
+    subIdFromRid = tostring(extract(@'/subscriptions/([^/]+)', 1, rid)),
+    rgFromRid    = tostring(extract(@'/resourcegroups/([^/]+)', 1, rid))
+| join kind=leftouter (
+    resources
+    | project
+        resourceId = tolower(tostring(id)),
+        resName = name,
+        resType = tostring(type),
+        resGroup = tostring(resourceGroup),
+        subId = tostring(subscriptionId),
+        tags
+    | union (
+        resourcecontainers
+        | where type in (
+            'microsoft.resources/subscriptions',
+            'microsoft.resources/subscriptions/resourcegroups',
+            'microsoft.management/managementgroups'
+        )
+        | project
+            resourceId = tolower(tostring(id)),
+            resName = name,
+            resType = tostring(type),
+            resGroup = tostring(resourceGroup),
+            subId = tostring(subscriptionId),
+            tags
+    )
+) on resourceId
+| project-away resourceId1
+```
+
+## 8b
+// ...same as 8a above, but add at the end before project-away:
+| extend
+    name           = coalesce(resName, ''),
+    type           = coalesce(resType, ''),
+    resourceGroup  = coalesce(resGroup, rgFromRid, ''),
+    subscriptionId = coalesce(subId, subIdFromRid, ''),
+    mnemonic       = tostring(coalesce(tostring(tags.mnemonic), tostring(tags.Mnemonic))),
+    environment    = tostring(coalesce(tostring(tags.environment), tostring(tags.Environment), tostring(tags.env), tostring(tags.Env)))
+| project-away resourceId1, resName, resType, resGroup, subId, rid
+
 ---
 
 ## Decision points along the way

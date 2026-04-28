@@ -220,13 +220,7 @@ If you hit it, the workaround is `join hint.remote=left` or `join hint.strategy=
 
 ## Step 8 — Full projection and tag extraction
 
-The original monolithic Step 8 from earlier in this doc was rejected by ARG. Bisection narrowed the cause to the `coalesce` over `tostring(tags['key'])` expressions used for `mnemonic` and `environment`. ARG/KQL is finicky about coalescing dynamic-field accesses.
-
-Below are the bisected variants. **Step 8a is confirmed working.** Steps 8c, 8d, and 8e are alternative tag-extraction strategies layered on top of 8a — pick whichever your environment accepts.
-
-### Step 8a — Confirmed working baseline (no tag extraction)
-
-This is the validated foundation. Mnemonic and environment are not yet extracted; everything else is in place.
+If Steps 6 and 7 both pass, plug in the full field list and the mnemonic/environment extraction:
 
 ```kusto
 policyresources
@@ -254,6 +248,7 @@ policyresources
         resType = tostring(type),
         resGroup = tostring(resourceGroup),
         subId = tostring(subscriptionId),
+        location = tostring(location),
         tags
     | union (
         resourcecontainers
@@ -268,64 +263,7 @@ policyresources
             resType = tostring(type),
             resGroup = tostring(resourceGroup),
             subId = tostring(subscriptionId),
-            tags
-    )
-) on resourceId
-| extend
-    name           = coalesce(resName, ''),
-    type           = coalesce(resType, ''),
-    resourceGroup  = coalesce(resGroup, rgFromRid, ''),
-    subscriptionId = coalesce(subId, subIdFromRid, '')
-| project-away resourceId1, resName, resType, resGroup, subId, rid
-| order by assignmentId asc, referenceId asc
-```
-
----
-
-### Step 8c — Full query with `iff` + `isnotempty` for case-insensitive tag lookup (UNTESTED)
-
-Replaces the rejected `coalesce` over dynamic-field accesses with nested `iff` calls. Handles four common casings of `environment` (`environment`, `Environment`, `env`, `Env`) and two of `mnemonic`. Run this first; if ARG accepts it, you're done.
-
-```kusto
-policyresources
-| where type == 'microsoft.policyinsights/policystates'
-| where tostring(properties.policyAssignmentScope) == '/providers/Microsoft.Management/managementGroups/<MG_ID>'
-| extend rid = tolower(tostring(properties.resourceId))
-| project
-    policyDefinitionId = tolower(tostring(properties.policyDefinitionId)),
-    assignmentId = tostring(properties.policyAssignmentId),
-    referenceId = tolower(tostring(properties.policyDefinitionReferenceId)),
-    policyDefinitionAction = properties.policyDefinitionAction,
-    policyAssignmentScope = tostring(properties.policyAssignmentScope),
-    policySetDefinitionCategory = tostring(properties.policySetDefinitionCategory),
-    complianceState = tostring(properties.complianceState),
-    resourceId = rid,
-    subIdFromRid = tostring(extract(@'/subscriptions/([^/]+)', 1, rid)),
-    rgFromRid    = tostring(extract(@'/resourcegroups/([^/]+)', 1, rid)),
-    isDeleted = properties.isDeleted,
-    policy_assessment_timestamp = properties.timestamp
-| join kind=leftouter (
-    resources
-    | project
-        resourceId = tolower(tostring(id)),
-        resName = name,
-        resType = tostring(type),
-        resGroup = tostring(resourceGroup),
-        subId = tostring(subscriptionId),
-        tags
-    | union (
-        resourcecontainers
-        | where type in (
-            'microsoft.resources/subscriptions',
-            'microsoft.resources/subscriptions/resourcegroups',
-            'microsoft.management/managementgroups'
-        )
-        | project
-            resourceId = tolower(tostring(id)),
-            resName = name,
-            resType = tostring(type),
-            resGroup = tostring(resourceGroup),
-            subId = tostring(subscriptionId),
+            location = '',
             tags
     )
 ) on resourceId
@@ -334,44 +272,30 @@ policyresources
     type           = coalesce(resType, ''),
     resourceGroup  = coalesce(resGroup, rgFromRid, ''),
     subscriptionId = coalesce(subId, subIdFromRid, ''),
-    mnemonic       = iff(isnotempty(tostring(tags.mnemonic)),
-                        tostring(tags.mnemonic),
-                        tostring(tags.Mnemonic)),
-    environment    = iff(isnotempty(tostring(tags.environment)),
-                        tostring(tags.environment),
-                     iff(isnotempty(tostring(tags.Environment)),
-                        tostring(tags.Environment),
-                     iff(isnotempty(tostring(tags.env)),
-                        tostring(tags.env),
-                        tostring(tags.Env))))
+    mnemonic       = tostring(coalesce(tags['mnemonic'],    tags['Mnemonic'])),
+    environment    = tostring(coalesce(tags['environment'], tags['Environment'], tags['env'], tags['Env']))
 | project-away resourceId1, resName, resType, resGroup, subId, rid
 | order by assignmentId asc, referenceId asc
 ```
 
----
+## Step 8a — Full projection and tag extraction
 
-### Step 8d — Single canonical casing only (fallback if 8c also fails)
-
-Drops the case-insensitive fallback entirely and relies on the canonical lowercase tag keys. Simplest possible tag access — almost certain to pass ARG validation. Use this if 8c is rejected, then either standardize tag casing in your org or normalize in Python after the query.
+If Steps 6 and 7 both pass, plug in the full field list and the mnemonic/environment extraction:
 
 ```kusto
 policyresources
 | where type == 'microsoft.policyinsights/policystates'
 | where tostring(properties.policyAssignmentScope) == '/providers/Microsoft.Management/managementGroups/<MG_ID>'
+| take 20
 | extend rid = tolower(tostring(properties.resourceId))
 | project
     policyDefinitionId = tolower(tostring(properties.policyDefinitionId)),
     assignmentId = tostring(properties.policyAssignmentId),
     referenceId = tolower(tostring(properties.policyDefinitionReferenceId)),
-    policyDefinitionAction = properties.policyDefinitionAction,
-    policyAssignmentScope = tostring(properties.policyAssignmentScope),
-    policySetDefinitionCategory = tostring(properties.policySetDefinitionCategory),
     complianceState = tostring(properties.complianceState),
     resourceId = rid,
     subIdFromRid = tostring(extract(@'/subscriptions/([^/]+)', 1, rid)),
-    rgFromRid    = tostring(extract(@'/resourcegroups/([^/]+)', 1, rid)),
-    isDeleted = properties.isDeleted,
-    policy_assessment_timestamp = properties.timestamp
+    rgFromRid    = tostring(extract(@'/resourcegroups/([^/]+)', 1, rid))
 | join kind=leftouter (
     resources
     | project
@@ -397,88 +321,19 @@ policyresources
             tags
     )
 ) on resourceId
+| project-away resourceId1
+```
+
+## 8b
+// ...same as 8a above, but add at the end before project-away:
 | extend
     name           = coalesce(resName, ''),
     type           = coalesce(resType, ''),
     resourceGroup  = coalesce(resGroup, rgFromRid, ''),
     subscriptionId = coalesce(subId, subIdFromRid, ''),
-    mnemonic       = tostring(tags.mnemonic),
-    environment    = tostring(tags.environment)
+    mnemonic       = tostring(coalesce(tostring(tags.mnemonic), tostring(tags.Mnemonic))),
+    environment    = tostring(coalesce(tostring(tags.environment), tostring(tags.Environment), tostring(tags.env), tostring(tags.Env)))
 | project-away resourceId1, resName, resType, resGroup, subId, rid
-| order by assignmentId asc, referenceId asc
-```
-
----
-
-### Step 8e — Lowercase the tags dynamic for case-insensitive access
-
-If 8d works and you need case-insensitive lookup without the nested `iff` chain, lowercase the entire `tags` dynamic in one shot and then access with a single canonical key.
-
-**Caveat:** this lowercases tag *values* too, not just keys. If downstream consumers expect mixed-case values (e.g., `Production` vs `production`), this will change them. Use only if value casing doesn't matter, or normalize back in Python.
-
-```kusto
-policyresources
-| where type == 'microsoft.policyinsights/policystates'
-| where tostring(properties.policyAssignmentScope) == '/providers/Microsoft.Management/managementGroups/<MG_ID>'
-| extend rid = tolower(tostring(properties.resourceId))
-| project
-    policyDefinitionId = tolower(tostring(properties.policyDefinitionId)),
-    assignmentId = tostring(properties.policyAssignmentId),
-    referenceId = tolower(tostring(properties.policyDefinitionReferenceId)),
-    policyDefinitionAction = properties.policyDefinitionAction,
-    policyAssignmentScope = tostring(properties.policyAssignmentScope),
-    policySetDefinitionCategory = tostring(properties.policySetDefinitionCategory),
-    complianceState = tostring(properties.complianceState),
-    resourceId = rid,
-    subIdFromRid = tostring(extract(@'/subscriptions/([^/]+)', 1, rid)),
-    rgFromRid    = tostring(extract(@'/resourcegroups/([^/]+)', 1, rid)),
-    isDeleted = properties.isDeleted,
-    policy_assessment_timestamp = properties.timestamp
-| join kind=leftouter (
-    resources
-    | project
-        resourceId = tolower(tostring(id)),
-        resName = name,
-        resType = tostring(type),
-        resGroup = tostring(resourceGroup),
-        subId = tostring(subscriptionId),
-        tags
-    | union (
-        resourcecontainers
-        | where type in (
-            'microsoft.resources/subscriptions',
-            'microsoft.resources/subscriptions/resourcegroups',
-            'microsoft.management/managementgroups'
-        )
-        | project
-            resourceId = tolower(tostring(id)),
-            resName = name,
-            resType = tostring(type),
-            resGroup = tostring(resourceGroup),
-            subId = tostring(subscriptionId),
-            tags
-    )
-) on resourceId
-| extend tagsLower = todynamic(tolower(tostring(tags)))
-| extend
-    name           = coalesce(resName, ''),
-    type           = coalesce(resType, ''),
-    resourceGroup  = coalesce(resGroup, rgFromRid, ''),
-    subscriptionId = coalesce(subId, subIdFromRid, ''),
-    mnemonic       = tostring(tagsLower.mnemonic),
-    environment    = tostring(tagsLower.environment)
-| project-away resourceId1, resName, resType, resGroup, subId, rid, tagsLower
-| order by assignmentId asc, referenceId asc
-```
-
----
-
-### Recommended order to try
-
-1. **Run 8c first.** If accepted, you're done — most flexible tag handling.
-2. **If 8c fails, run 8d.** Almost certain to pass; gives you mnemonic/environment for one canonical casing only.
-3. **If 8d works and you need case-insensitive lookup, try 8e.** Read the value-casing caveat first.
-4. **If all three fail**, the issue is more fundamental than tag access — fall back to Path B (split queries, merge in Python).
 
 ---
 

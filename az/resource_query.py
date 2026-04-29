@@ -148,3 +148,14 @@ def get_subscription_name_map():
 sub_map = get_subscription_name_map()
 for row in policy_state_rows:
     row["subscriptionName"] = sub_map.get(row.get("subscriptionId"), "")
+
+
+# Diagnostic Query:
+policyresources
+| where type == 'microsoft.policyinsights/policystates'
+| where tostring(properties.policyAssignmentScope) == '/providers/Microsoft.Management/managementGroups/<MG_ID>'
+| extend rid = tolower(tostring(properties.resourceId))
+| extend extractedType = tolower(tostring(extract(@'/providers/([^/]+/[^/]+)/[^/]+/?$', 1, rid)))
+| summarize count() by extractedType
+| order by count_ desc
+| take 30

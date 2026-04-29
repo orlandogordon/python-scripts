@@ -159,3 +159,123 @@ policyresources
 | summarize count() by extractedType
 | order by count_ desc
 | take 30
+
+
+
+
+
+## For standard query:
+def get_query(query_managed_id):
+    return f"""
+    policyresources
+    | where type == 'microsoft.policyinsights/policystates'
+    | where tostring(properties.policyAssignmentScope) == '/providers/Microsoft.Management/managementGroups/{query_managed_id}'
+    | extend resourceId               = tolower(tostring(properties.resourceId)),
+             subscriptionId           = tolower(tostring(properties.subscriptionId)),
+             resourceGroupFromState   = tolower(tostring(properties.resourceGroup)),
+             resourceTypeFromState    = tostring(properties.resourceType),
+             locationFromState        = tostring(properties.resourceLocation)
+    // Derive name from the resource ID — last segment. Works for top-level AND child resources.
+    | extend nameFromId = tostring(split(resourceId, '/')[-1])
+    // Best-effort enrichment from the resources table (tags + authoritative type/location/RG/name
+    // for top-level resources). leftouter so child/deleted/sub-scope rows still come through.
+    | join kind=leftouter (
+        resources
+        | project resJoinId    = tolower(id),
+                  resName      = name,
+                  resType      = type,
+                  resLocation  = location,
+                  resGroup     = tolower(resourceGroup),
+                  resTags      = tags
+      ) on $left.resourceId == $right.resJoinId
+    // Subscription name from resourcecontainers
+    | join kind=leftouter (
+        resourcecontainers
+        | where type == 'microsoft.resources/subscriptions'
+        | project subJoinId = tolower(subscriptionId),
+                  subscriptionName = name
+      ) on $left.subscriptionId == $right.subJoinId
+    | project
+        // Coalesce: prefer the live resources-table value, fall back to the state record / derived name
+        name                          = coalesce(resName, nameFromId),
+        resourceId                    = resourceId,
+        type                          = coalesce(resType, resourceTypeFromState),
+        subscriptionId                = subscriptionId,
+        subscriptionName              = subscriptionName,
+        resourceGroup                 = coalesce(resGroup, resourceGroupFromState),
+        location                      = coalesce(resLocation, locationFromState),
+        tags                          = resTags,                       // null when not in resources table
+        policyDefinitionId            = tolower(tostring(properties.policyDefinitionId)),
+        complianceState               = tostring(properties.complianceState),
+        isDeleted                     = tobool(properties.isDeleted),
+        policyAssignmentScope         = tostring(properties.policyAssignmentScope),
+        policySetDefinitionCategory   = tostring(properties.policySetDefinitionCategory),
+        policyDefinitionAction        = tostring(properties.policyDefinitionAction),
+        policy_assessment_timestamp   = todatetime(properties.timestamp),
+        referenceId                   = tolower(tostring(properties.policyDefinitionReferenceId)),
+        assignmentId                  = tostring(properties.policyAssignmentId)
+    """
+
+
+
+
+## Tags unpacking
+def get_query(query_managed_id):
+    return f"""
+    policyresources
+    | where type == 'microsoft.policyinsights/policystates'
+    | where tostring(properties.policyAssignmentScope) == '/providers/Microsoft.Management/managementGroups/{query_managed_id}'
+    | extend resourceId               = tolower(tostring(properties.resourceId)),
+             subscriptionId           = tolower(tostring(properties.subscriptionId)),
+             resourceGroupFromState   = tolower(tostring(properties.resourceGroup)),
+             resourceTypeFromState    = tostring(properties.resourceType),
+             locationFromState        = tostring(properties.resourceLocation)
+    | extend nameFromId = tostring(split(resourceId, '/')[-1])
+    | join kind=leftouter (
+        resources
+        | extend mnemonic = tostring(coalesce(
+                                tags['mnemonic'],
+                                tags['Mnemonic'],
+                                tags['MNEMONIC'])),
+                 environment = tostring(coalesce(
+                                tags['environment'],
+                                tags['Environment'],
+                                tags['ENVIRONMENT'],
+                                tags['env'],
+                                tags['Env']))
+        | project resJoinId    = tolower(id),
+                  resName      = name,
+                  resType      = type,
+                  resLocation  = location,
+                  resGroup     = tolower(resourceGroup),
+                  resTags      = tags,
+                  mnemonic,
+                  environment
+      ) on $left.resourceId == $right.resJoinId
+    | join kind=leftouter (
+        resourcecontainers
+        | where type == 'microsoft.resources/subscriptions'
+        | project subJoinId = tolower(subscriptionId),
+                  subscriptionName = name
+      ) on $left.subscriptionId == $right.subJoinId
+    | project
+        name                          = coalesce(resName, nameFromId),
+        resourceId                    = resourceId,
+        type                          = coalesce(resType, resourceTypeFromState),
+        subscriptionId                = subscriptionId,
+        subscriptionName              = subscriptionName,
+        resourceGroup                 = coalesce(resGroup, resourceGroupFromState),
+        location                      = coalesce(resLocation, locationFromState),
+        tags                          = resTags,
+        mnemonic                      = mnemonic,
+        environment                   = environment,
+        policyDefinitionId            = tolower(tostring(properties.policyDefinitionId)),
+        complianceState               = tostring(properties.complianceState),
+        isDeleted                     = tobool(properties.isDeleted),
+        policyAssignmentScope         = tostring(properties.policyAssignmentScope),
+        policySetDefinitionCategory   = tostring(properties.policySetDefinitionCategory),
+        policyDefinitionAction        = tostring(properties.policyDefinitionAction),
+        policy_assessment_timestamp   = todatetime(properties.timestamp),
+        referenceId                   = tolower(tostring(properties.policyDefinitionReferenceId)),
+        assignmentId                  = tostring(properties.policyAssignmentId)
+    """

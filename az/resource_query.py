@@ -1,4 +1,44 @@
 
+HEADERS = [
+    "Rsource Name",
+    "Resource ID",
+    "Resource Type",
+    "Subscription ID",
+    "Subscription Name",
+    "Resource Group",
+    "Policy Definition ID",
+    "Compliant",
+    "Resource Tags",
+    "Resource Deleted",
+    "Resource Location",
+    "Policy Assignment Scope",
+    "Policy Set Definition Category",
+    "Policy Definition Action",
+    "Policy Assessment Timestamp",
+    "Reference ID",
+    "Assignment ID",
+]
+
+FIELD_NAMES = [
+    "name",
+    "resourceId",
+    "type",
+    "subscriptionId",
+    "subscriptionName",
+    "resourceGroup",
+    "policyDefinitionId",
+    "complianceState",
+    "tags",
+    "isDeleted",
+    "location",
+    "policyAssignmentScope",
+    "policySetDefinitionCategory",
+    "policyDefinitionAction",
+    "policy_assessment_timestamp",
+    "referenceId",
+    "assignmentId",
+]
+
 def get_query(query_managed_id):
     return f"""
     policyresources
@@ -38,80 +78,6 @@ def get_query(query_managed_id):
 
 
 def get_query(query_managed_id):
-    return f"""
-    policyresources
-    | where type == 'microsoft.policyinsights/policystates'
-    | where tostring(properties.policyAssignmentScope) == '/providers/Microsoft.Management/managementGroups/{query_managed_id}'
-    | project
-        policyDefinitionId = tolower(tostring(properties.policyDefinitionId)),
-        assignmentId = tostring(properties.policyAssignmentId),
-        referenceId = tolower(tostring(properties.policyDefinitionReferenceId)),
-        policyDefinitionAction = properties.policyDefinitionAction,
-        policyAssignmentScope = tostring(properties.policyAssignmentScope),
-        policySetDefinitionCategory = tostring(properties.policySetDefinitionCategory),
-        complianceState = tostring(properties.complianceState),
-        resourceId = tolower(tostring(properties.resourceId)),
-        isDeleted = properties.isDeleted,
-        policy_assessment_timestamp = properties.timestamp
-    | join kind=leftouter (
-        // Build a unified lookup that covers ARM resources, RGs, subs, and mgmt groups
-        resources
-        | project
-            resourceId = tolower(tostring(id)),
-            name,
-            type,
-            resourceGroup,
-            subscriptionId,
-            location,
-            tags
-        | union (
-            resourcecontainers
-            | where type in (
-                'microsoft.resources/subscriptions',
-                'microsoft.resources/subscriptions/resourcegroups',
-                'microsoft.management/managementgroups'
-            )
-            | project
-                resourceId = tolower(tostring(id)),
-                name,
-                type,
-                resourceGroup = tostring(resourceGroup),
-                subscriptionId,
-                location,
-                tags
-        )
-        // Attach subscription name to everything in one shot
-        | join kind=leftouter (
-            resourcecontainers
-            | where type == 'microsoft.resources/subscriptions'
-            | project subscriptionId, subscriptionName = name
-        ) on subscriptionId
-        | project-away subscriptionId1
-    ) on resourceId
-    | extend
-        mnemonic   = tostring(coalesce(tags['mnemonic'],   tags['Mnemonic'])),
-        environment = tostring(coalesce(tags['environment'], tags['Environment'], tags['env'], tags['Env']))
-    | project-away resourceId1
-    | order by assignmentId asc, referenceId asc
-    """
-
-
-
-
-
-
-
-def get_query(query_managed_id):
-    """
-    Returns an Azure Resource Graph query that joins policy state rows
-    against both the resources and resourcecontainers tables, so that
-    policy assignments scoped to resources, resource groups, subscriptions,
-    and management groups all get enriched with name/type/RG/subscription.
-
-    Resource group and subscription ID are also parsed directly from the
-    policy state's resourceId as a fallback, so they are populated even
-    when the join misses.
-    """
     return """
     policyresources
     | where type == 'microsoft.policyinsights/policystates'
@@ -138,7 +104,8 @@ def get_query(query_managed_id):
             resType = tostring(type),
             resGroup = tostring(resourceGroup),
             subId = tostring(subscriptionId),
-            tags
+            resLocation = tostring(location),
+            resTags = tags
         | union (
             resourcecontainers
             | where type in (
@@ -152,14 +119,32 @@ def get_query(query_managed_id):
                 resType = tostring(type),
                 resGroup = tostring(resourceGroup),
                 subId = tostring(subscriptionId),
-                tags
+                resLocation = '',
+                resTags = tags
         )
     ) on resourceId
     | extend
         name           = coalesce(resName, ''),
         type           = coalesce(resType, ''),
         resourceGroup  = coalesce(resGroup, rgFromRid, ''),
-        subscriptionId = coalesce(subId, subIdFromRid, '')
-    | project-away resourceId1, resName, resType, resGroup, subId, rid
+        subscriptionId = coalesce(subId, subIdFromRid, ''),
+        location       = coalesce(resLocation, ''),
+        tags           = resTags,
+        subscriptionName = ''
+    | project-away resourceId1, resName, resType, resGroup, subId, rid, resLocation, resTags
     | order by assignmentId asc, referenceId asc
     """
+
+def get_subscription_name_map():
+    """Fetch all subscriptions visible to the caller and return {id: name}."""
+    body = {
+        "query": "resourcecontainers | where type == 'microsoft.resources/subscriptions' | project subscriptionId, name"
+    }
+    response = requests.post(ARG_URL, headers=headers, data=json.dumps(body))
+    rows = response.json().get("data", [])
+    return {row["subscriptionId"]: row["name"] for row in rows}
+
+# Then when processing your main query results:
+sub_map = get_subscription_name_map()
+for row in policy_state_rows:
+    row["subscriptionName"] = sub_map.get(row.get("subscriptionId"), "")

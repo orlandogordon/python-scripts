@@ -40,16 +40,18 @@ extract: print-env
 		application/gzip|application/x-gzip|application/x-tar) ;; \
 		*) echo "ERROR: $$archive is not a tar/gzip file (got $$(file -b "$$archive"))"; head -c 200 "$$archive"; echo; exit 1 ;; \
 	esac; \
-	tar -xf "$$archive"; \
+	rm -rf policies; \
+	mkdir -p policies; \
+	tar -xf "$$archive" -C policies; \
 	archived=$$(tar -tf "$$archive" | wc -l); \
-	yml_count=$$(find . \( -name '*.yml' -o -name '*.yaml' \) -type f | wc -l); \
+	yml_count=$$(find policies \( -name '*.yml' -o -name '*.yaml' \) -type f | wc -l); \
 	echo "------------------------------------------------------------"; \
 	echo " Extraction summary"; \
 	echo "   archive        : $$archive ($$(du -h "$$archive" | cut -f1), mtime $$(date -r "$$archive" '+%Y-%m-%d %H:%M:%S'))"; \
-	echo "   extracted into : $$(pwd)"; \
+	echo "   extracted into : $$(pwd)/policies"; \
 	echo "   files in tar   : $$archived"; \
 	echo "   yml policies   : $$yml_count"; \
-	echo "   top-level      :"; \
-	ls -1 | sed 's/^/      /'; \
+	echo "   top-level of policies/ :"; \
+	ls -1 policies | sed 's/^/      /'; \
 	echo "------------------------------------------------------------"; \
 	if [ "$$yml_count" -eq 0 ]; then echo "ERROR: no yml policy files present after extract — terraform will see no policies and plan to destroy everything"; exit 1; fi

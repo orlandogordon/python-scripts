@@ -1,0 +1,45 @@
+pipeline {
+    environment {
+        MNEMONIC = "ABC"
+    }
+
+    stages {
+        stage("Initialization") {
+            steps {
+                script {
+                    IS_PR = env.CHANGE_ID != null
+                    env.TARGET_BRANCH = IS_PR ? env.CHANGE_TARGET : env.BRANCH_NAME
+                    IS_DEPLOY_BRANCH = ['development', 'staging', 'release'].contains(env.TARGET_BRANCH)
+                    env.ARCHIVE_BRANCH = env.TARGET_BRANCH
+                }
+            }
+        }
+
+        stage("Publish Artifact") {
+            when {
+                expression { IS_DEPLOY_BRANCH }
+            }
+            steps {
+                script{
+                    sh '''
+                        make ci-publish
+                    '''
+                }
+            }
+        }
+
+        stage("Create Terraform Plan") {
+            when {
+                expression { IS_DEPLOY_BRANCH }
+            }
+            steps {
+                script{
+                    sh '''
+                        make deployer-retrieve
+                        make deployer-plan
+                    '''
+                }
+            }
+        }
+    }
+}
